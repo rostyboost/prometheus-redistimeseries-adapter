@@ -78,7 +78,7 @@ func add(key *string, labels []*prompb.Label, metric *string, timestamp *int64, 
 
 func addExpire(key *string, durationSecs *string) redis.Cmder {
 	args := make([]interface{}, 0, 3)
-	args = append(args, "EXPIRE", *key, durationSecs)
+	args = append(args, "EXPIRE", *key, *durationSecs)
 	cmd := redis.NewStatusCmd(args...)
 	return cmd
 }
