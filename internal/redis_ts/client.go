@@ -3,33 +3,57 @@ package redis_ts
 import (
 	"bytes"
 	"fmt"
-	"github.com/go-redis/redis"
-	"github.com/prometheus/prometheus/prompb"
-	log "github.com/sirupsen/logrus"
 	"math"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/go-redis/redis"
+	"github.com/prometheus/prometheus/prompb"
+	log "github.com/sirupsen/logrus"
 )
 
-type Client redis.Client
+type Client struct {
+	redis.Client
+	expireKeysSecs *string
+}
 type StatusCmd redis.StatusCmd
 
 const nameLabel = "__name__"
 
 // NewClient creates a new Client.
-func NewClient(address string, auth string) *Client {
-	client := redis.NewClient(&redis.Options{
+func NewClient(address string, auth string, expireKeysSecs int) *Client {
+	c := redis.NewClient(&redis.Options{
 		Addr:     address,
 		Password: auth,
 		DB:       0, // use default DB
 	})
-	return (*Client)(client)
+
+	var e *string = nil
+	if expireKeysSecs > 0 {
+		v := strconv.Itoa(expireKeysSecs)
+		e = &v
+	}
+
+	return &Client{
+		Client:         *c,
+		expireKeysSecs: e,
+	}
 }
 
-func NewFailoverClient(failoverOpt *redis.FailoverOptions) *Client {
-	client := redis.NewFailoverClient(failoverOpt)
-	return (*Client)(client)
+func NewFailoverClient(failoverOpt *redis.FailoverOptions, expireKeysSecs int) *Client {
+	c := redis.NewFailoverClient(failoverOpt)
+
+	var e *string = nil
+	if expireKeysSecs > 0 {
+		v := strconv.Itoa(expireKeysSecs)
+		e = &v
+	}
+
+	return &Client{
+		Client:         *c,
+		expireKeysSecs: e,
+	}
 }
 
 func add(key *string, labels []*prompb.Label, metric *string, timestamp *int64, value *float64) redis.Cmder {
@@ -52,9 +76,16 @@ func add(key *string, labels []*prompb.Label, metric *string, timestamp *int64, 
 	return cmd
 }
 
+func addExpire(key *string, durationSecs *string) redis.Cmder {
+	args := make([]interface{}, 0, 3)
+	args = append(args, "EXPIRE", *key, durationSecs)
+	cmd := redis.NewStatusCmd(args...)
+	return cmd
+}
+
 // Write sends a batch of samples to RedisTS via its HTTP API.
 func (c *Client) Write(timeseries []*prompb.TimeSeries) (returnErr error) {
-	pipe := (*redis.Client)(c).Pipeline()
+	pipe := c.Pipeline()
 	defer func() {
 		err := pipe.Close()
 		if err != nil {
@@ -70,14 +101,23 @@ func (c *Client) Write(timeseries []*prompb.TimeSeries) (returnErr error) {
 			log.WithFields(log.Fields{"Metric": timeseries[i].Labels}).Info("Cannot send unnamed sample to RedisTS, skipping")
 			continue
 		}
+		hasInsert := false
 		for j := range samples {
 			sample := &samples[j]
 			if math.IsNaN(sample.Value) || math.IsInf(sample.Value, 0) {
 				log.WithFields(log.Fields{"sample": sample, "value": sample.Value}).Debug("Cannot send to RedisTS, skipping")
 				continue
 			}
+			hasInsert = true
 
 			cmd := add(&key, timeseries[i].Labels, metric, &sample.Timestamp, &sample.Value)
+			err := pipe.Process(cmd)
+			if err != nil {
+				return err
+			}
+		}
+		if hasInsert && c.expireKeysSecs != nil {
+			cmd := addExpire(&key, c.expireKeysSecs)
 			err := pipe.Process(cmd)
 			if err != nil {
 				return err
@@ -123,7 +163,7 @@ func metricToKeyName(metric *string, labels *[]string) (keyName string) {
 func (c *Client) Read(req *prompb.ReadRequest) (returnVal *prompb.ReadResponse, returnErr error) {
 	var timeSeries []*prompb.TimeSeries
 	results := make([]*prompb.QueryResult, 0, len(req.Queries))
-	pipe := (*redis.Client)(c).Pipeline()
+	pipe := c.Pipeline()
 	defer func() {
 		err := pipe.Close()
 		if err != nil {

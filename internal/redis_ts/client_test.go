@@ -1,9 +1,10 @@
 package redis_ts
 
 import (
-	"github.com/prometheus/prometheus/prompb"
 	"testing"
 	"time"
+
+	"github.com/prometheus/prometheus/prompb"
 
 	"github.com/go-redis/redis"
 	"github.com/stretchr/testify/assert"
@@ -58,7 +59,7 @@ func TestWriteSingleSample(t *testing.T) {
 			},
 		},
 	}
-	var redisTsClient = NewClient(redisAddress, redisAuth)
+	var redisTsClient = NewClient(redisAddress, redisAuth, -1)
 
 	err := redisTsClient.Write(insertedSamples)
 	assert.Nil(t, err, "Write of samples failed")
@@ -97,7 +98,7 @@ func TestNewFailoverClient(t *testing.T) {
 	var redisFailoverClient = NewFailoverClient(&redis.FailoverOptions{
 		MasterName:    sentinelMasterName,
 		SentinelAddrs: []string{sentinelAddress},
-	})
+	}, -1)
 	redisFailoverClient.Ping()
 }
 

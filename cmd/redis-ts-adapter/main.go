@@ -2,11 +2,12 @@ package main
 
 import (
 	"flag"
-	"github.com/go-redis/redis"
 	"io/ioutil"
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/go-redis/redis"
 
 	"github.com/RedisTimeSeries/prometheus-redistimeseries-adapter/internal/redis_ts"
 	"github.com/golang/protobuf/proto"
@@ -29,6 +30,7 @@ type config struct {
 	IdleTimeout             time.Duration
 	IdleCheckFrequency      time.Duration
 	WriteTimeout            time.Duration
+	ExpireKeysSeconds       int
 }
 
 var cfg = &config{}
@@ -68,6 +70,8 @@ func parseFlags() {
 	flag.DurationVar(&cfg.WriteTimeout, "redis-write-timeout", 1*time.Minute,
 		"Redis write timeout.")
 	flag.BoolVar(&cfg.Profile, "profile", false, "Run with profile")
+	flag.IntVar(&cfg.ExpireKeysSeconds, "expire-keys-secs", -1,
+		"EXPIRE value on all keys inserted.")
 
 	flag.Parse()
 	validateConfiguration()
@@ -118,14 +122,14 @@ func buildClient(cfg *config) *redis_ts.Client {
 			IdleCheckFrequency: cfg.IdleCheckFrequency,
 			WriteTimeout:       cfg.WriteTimeout,
 			Password:           cfg.redisAuth,
-		})
+		}, cfg.ExpireKeysSeconds)
 		return client
 	}
 	if cfg.redisAddress != "" {
 		log.WithFields(log.Fields{"redis_ts_address": cfg.redisAddress}).Info("Creating redis TS client")
 		client := redis_ts.NewClient(
 			cfg.redisAddress,
-			cfg.redisAuth)
+			cfg.redisAuth, cfg.ExpireKeysSeconds)
 		return client
 	}
 	// TODO: build redis reader here
